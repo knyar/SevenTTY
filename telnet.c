@@ -604,16 +604,81 @@ static int ansi_sys_fixup(int session_idx, const char* in, int len,
 				{
 					out[wi++] = '\033';
 					out[wi++] = '7';
+					s->ansi_fixup_state = 0;
+					ri++;
 				}
 				else if (c == 'u')
 				{
 					out[wi++] = '\033';
 					out[wi++] = '8';
+					s->ansi_fixup_state = 0;
+					ri++;
+				}
+				else if (c == '?')
+				{
+					/* start of ESC[? -- may be ?2026h/l (synchronized output) */
+					s->ansi_fixup_state = 3;
+					ri++;
 				}
 				else
 				{
 					out[wi++] = '\033';
 					out[wi++] = '[';
+					out[wi++] = c;
+					s->ansi_fixup_state = 0;
+					ri++;
+				}
+				break;
+
+			case 3: /* got ESC[? */
+				if (c == '2') { s->ansi_fixup_state = 4; }
+				else
+				{
+					out[wi++] = '\033'; out[wi++] = '['; out[wi++] = '?';
+					out[wi++] = c;
+					s->ansi_fixup_state = 0;
+				}
+				ri++;
+				break;
+
+			case 4: /* got ESC[?2 */
+				if (c == '0') { s->ansi_fixup_state = 5; }
+				else
+				{
+					out[wi++] = '\033'; out[wi++] = '['; out[wi++] = '?';
+					out[wi++] = '2'; out[wi++] = c;
+					s->ansi_fixup_state = 0;
+				}
+				ri++;
+				break;
+
+			case 5: /* got ESC[?20 */
+				if (c == '2') { s->ansi_fixup_state = 6; }
+				else
+				{
+					out[wi++] = '\033'; out[wi++] = '['; out[wi++] = '?';
+					out[wi++] = '2'; out[wi++] = '0'; out[wi++] = c;
+					s->ansi_fixup_state = 0;
+				}
+				ri++;
+				break;
+
+			case 6: /* got ESC[?202 */
+				if (c == '6') { s->ansi_fixup_state = 7; }
+				else
+				{
+					out[wi++] = '\033'; out[wi++] = '['; out[wi++] = '?';
+					out[wi++] = '2'; out[wi++] = '0'; out[wi++] = '2'; out[wi++] = c;
+					s->ansi_fixup_state = 0;
+				}
+				ri++;
+				break;
+
+			case 7: /* got ESC[?2026 -- strip h (begin) or l (end), pass through anything else */
+				if (c != 'h' && c != 'l')
+				{
+					out[wi++] = '\033'; out[wi++] = '['; out[wi++] = '?';
+					out[wi++] = '2'; out[wi++] = '0'; out[wi++] = '2'; out[wi++] = '6';
 					out[wi++] = c;
 				}
 				s->ansi_fixup_state = 0;

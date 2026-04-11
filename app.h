@@ -83,7 +83,7 @@ struct session
 	unsigned char telnet_state;       /* IAC parser state */
 	unsigned char telnet_sb_buf[64];  /* subnegotiation buffer */
 	int telnet_sb_len;
-	unsigned char ansi_fixup_state;  /* 0=normal, 1=saw ESC, 2=saw ESC[ */
+	unsigned char ansi_fixup_state;  /* 0=normal, 1=saw ESC, 2=saw ESC[, 3-7=matching ESC[?2026 */
 
 	// thread state
 	enum THREAD_COMMAND thread_command;
