@@ -1,5 +1,5 @@
 #include "constants.r"
-#include "icons.r"
+#include "app_icons.r"
 
 #include "Dialogs.r"
 #include "Processes.r"
