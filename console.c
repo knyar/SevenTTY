@@ -1252,33 +1252,117 @@ void draw_screen_color(struct window_context* wc, Rect* r)
 
 						if (glyph > 127 && !(WC_S(wc).scroll_offset > 0 && pos.row < WC_S(wc).scroll_offset))
 						{
-							sym_code = symbol_font_lookup(orig_cp);
-							if (sym_code >= 0)
+							/* Box-drawing and block element ASCII fallbacks.
+							   Applied BEFORE symbol font lookup: the symbol font
+							   rendering path is currently broken. */
+							int ascii_fallback = 0;
+							switch (orig_cp)
 							{
-								glyph = sym_code;
-								row_is_symbol[pos.col] = 1;
+								case 0x2500: case 0x2501: case 0x2504: case 0x2505:
+								case 0x2508: case 0x2509: case 0x254C: case 0x254D:
+								case 0x2550:
+									glyph = '-'; ascii_fallback = 1; break;
+								case 0x2502: case 0x2503: case 0x2506: case 0x2507:
+								case 0x250A: case 0x250B: case 0x254E: case 0x254F:
+								case 0x2551:
+									glyph = '|'; ascii_fallback = 1; break;
+								case 0x250C: case 0x250D: case 0x250E: case 0x250F:
+								case 0x2510: case 0x2511: case 0x2512: case 0x2513:
+								case 0x2514: case 0x2515: case 0x2516: case 0x2517:
+								case 0x2518: case 0x2519: case 0x251A: case 0x251B:
+								case 0x251C: case 0x251D: case 0x251E: case 0x251F:
+								case 0x2520: case 0x2521: case 0x2522: case 0x2523:
+								case 0x2524: case 0x2525: case 0x2526: case 0x2527:
+								case 0x2528: case 0x2529: case 0x252A: case 0x252B:
+								case 0x252C: case 0x252D: case 0x252E: case 0x252F:
+								case 0x2530: case 0x2531: case 0x2532: case 0x2533:
+								case 0x2534: case 0x2535: case 0x2536: case 0x2537:
+								case 0x2538: case 0x2539: case 0x253A: case 0x253B:
+								case 0x253C: case 0x253D: case 0x253E: case 0x253F:
+								case 0x2540: case 0x2541: case 0x2542: case 0x2543:
+								case 0x2544: case 0x2545: case 0x2546: case 0x2547:
+								case 0x2548: case 0x2549: case 0x254A: case 0x254B:
+								case 0x2552: case 0x2553: case 0x2554: case 0x2555:
+								case 0x2556: case 0x2557: case 0x2558: case 0x2559:
+								case 0x255A: case 0x255B: case 0x255C: case 0x255D:
+								case 0x255E: case 0x255F: case 0x2560: case 0x2561:
+								case 0x2562: case 0x2563: case 0x2564: case 0x2565:
+								case 0x2566: case 0x2567: case 0x2568: case 0x2569:
+								case 0x256A: case 0x256B: case 0x256C:
+								case 0x256D: case 0x256E: case 0x256F: case 0x2570:
+									glyph = '+'; ascii_fallback = 1; break;
+								case 0x2571:
+									glyph = '/'; ascii_fallback = 1; break;
+								case 0x2572:
+									glyph = '\\'; ascii_fallback = 1; break;
+								case 0x2573:
+									glyph = 'X'; ascii_fallback = 1; break;
+								case 0x2580:
+									glyph = '"'; ascii_fallback = 1; break;
+								case 0x2584:
+									glyph = '_'; ascii_fallback = 1; break;
+								case 0x2588: case 0x2589: case 0x258A:
+								case 0x258B: case 0x258C: case 0x258D:
+								case 0x258E: case 0x258F: case 0x2590:
+								case 0x2593:
+									glyph = '#'; ascii_fallback = 1; break;
+								case 0x2591: case 0x2592:
+									glyph = '.'; ascii_fallback = 1; break;
+								case 0x2594:
+									glyph = '\''; ascii_fallback = 1; break;
+								case 0x2595:
+									glyph = '|'; ascii_fallback = 1; break;
+								/* Dingbats/arrows used by Claude Code and other modern TUIs */
+								case 0x2190: /* ← */
+									glyph = '<'; ascii_fallback = 1; break;
+								case 0x2192: /* → */
+								case 0x276F: /* ❯ angle quotation mark, Claude Code prompt */
+									glyph = '>'; ascii_fallback = 1; break;
+								case 0x2191: /* ↑ */
+									glyph = '^'; ascii_fallback = 1; break;
+								case 0x2193: /* ↓ */
+									glyph = 'v'; ascii_fallback = 1; break;
+								case 0x25CF: /* ● bullet */
+								case 0x25CB: /* ○ circle */
+								case 0x2B24: /* ⬤ large black circle */
+									glyph = '*'; ascii_fallback = 1; break;
+								case 0x2713: /* ✓ checkmark */
+									glyph = 'v'; ascii_fallback = 1; break;
+								case 0x2717: /* ✗ ballot X */
+								case 0x2715: /* ✕ */
+									glyph = 'x'; ascii_fallback = 1; break;
 							}
-							else if (glyph <= 0xFFFF)
+
+							if (!ascii_fallback)
 							{
-								glyph = UNICODE_BMP_NORMALIZER[glyph];
-								if ((char)glyph == MAC_ROMAN_LOZENGE && orig_cp > 127)
+								sym_code = symbol_font_lookup(orig_cp);
+								if (sym_code >= 0)
 								{
-									switch (orig_cp)
+									glyph = sym_code;
+									row_is_symbol[pos.col] = 1;
+								}
+								else if (glyph <= 0xFFFF)
+								{
+									glyph = UNICODE_BMP_NORMALIZER[glyph];
+									if ((char)glyph == MAC_ROMAN_LOZENGE && orig_cp > 127)
 									{
-										case 0x2014: glyph = 0xD1; break;
-										case 0x2013: glyph = 0xD0; break;
-										case 0x2018: glyph = 0xD4; break;
-										case 0x2019: glyph = 0xD5; break;
-										case 0x201C: glyph = 0xD2; break;
-										case 0x201D: glyph = 0xD3; break;
-										case 0x2026: glyph = 0xC9; break;
-										case 0x2122: glyph = 0xAA; break;
+										switch (orig_cp)
+										{
+											case 0x2014: glyph = 0xD1; break;
+											case 0x2013: glyph = 0xD0; break;
+											case 0x2018: glyph = 0xD4; break;
+											case 0x2019: glyph = 0xD5; break;
+											case 0x201C: glyph = 0xD2; break;
+											case 0x201D: glyph = 0xD3; break;
+											case 0x2026: glyph = 0xC9; break;
+											case 0x2122: glyph = 0xAA; break;
+										}
 									}
 								}
-							}
-							else
-							{
-								glyph = MAC_ROMAN_LOZENGE;
+								else
+								{
+									glyph = MAC_ROMAN_LOZENGE;
+								}
 							}
 						}
 
@@ -1529,16 +1613,95 @@ void draw_screen_fast(struct window_context* wc, Rect* r)
 
 					if (glyph > 127)
 					{
-						sym_code = symbol_font_lookup(orig_cp);
-						if (sym_code >= 0)
+						int ascii_fallback = 0;
+						switch (orig_cp)
 						{
-							glyph = sym_code;
-							row_is_symbol[pos.col] = 1;
+							case 0x2500: case 0x2501: case 0x2504: case 0x2505:
+							case 0x2508: case 0x2509: case 0x254C: case 0x254D:
+							case 0x2550:
+								glyph = '-'; ascii_fallback = 1; break;
+							case 0x2502: case 0x2503: case 0x2506: case 0x2507:
+							case 0x250A: case 0x250B: case 0x254E: case 0x254F:
+							case 0x2551: case 0x2595:
+								glyph = '|'; ascii_fallback = 1; break;
+							case 0x250C: case 0x250D: case 0x250E: case 0x250F:
+							case 0x2510: case 0x2511: case 0x2512: case 0x2513:
+							case 0x2514: case 0x2515: case 0x2516: case 0x2517:
+							case 0x2518: case 0x2519: case 0x251A: case 0x251B:
+							case 0x251C: case 0x251D: case 0x251E: case 0x251F:
+							case 0x2520: case 0x2521: case 0x2522: case 0x2523:
+							case 0x2524: case 0x2525: case 0x2526: case 0x2527:
+							case 0x2528: case 0x2529: case 0x252A: case 0x252B:
+							case 0x252C: case 0x252D: case 0x252E: case 0x252F:
+							case 0x2530: case 0x2531: case 0x2532: case 0x2533:
+							case 0x2534: case 0x2535: case 0x2536: case 0x2537:
+							case 0x2538: case 0x2539: case 0x253A: case 0x253B:
+							case 0x253C: case 0x253D: case 0x253E: case 0x253F:
+							case 0x2540: case 0x2541: case 0x2542: case 0x2543:
+							case 0x2544: case 0x2545: case 0x2546: case 0x2547:
+							case 0x2548: case 0x2549: case 0x254A: case 0x254B:
+							case 0x2552: case 0x2553: case 0x2554: case 0x2555:
+							case 0x2556: case 0x2557: case 0x2558: case 0x2559:
+							case 0x255A: case 0x255B: case 0x255C: case 0x255D:
+							case 0x255E: case 0x255F: case 0x2560: case 0x2561:
+							case 0x2562: case 0x2563: case 0x2564: case 0x2565:
+							case 0x2566: case 0x2567: case 0x2568: case 0x2569:
+							case 0x256A: case 0x256B: case 0x256C:
+							case 0x256D: case 0x256E: case 0x256F: case 0x2570:
+								glyph = '+'; ascii_fallback = 1; break;
+							case 0x2571:
+								glyph = '/'; ascii_fallback = 1; break;
+							case 0x2572:
+								glyph = '\\'; ascii_fallback = 1; break;
+							case 0x2573:
+								glyph = 'X'; ascii_fallback = 1; break;
+							case 0x2580:
+								glyph = '"'; ascii_fallback = 1; break;
+							case 0x2584:
+								glyph = '_'; ascii_fallback = 1; break;
+							case 0x2588: case 0x2589: case 0x258A:
+							case 0x258B: case 0x258C: case 0x258D:
+							case 0x258E: case 0x258F: case 0x2590:
+							case 0x2593:
+								glyph = '#'; ascii_fallback = 1; break;
+							case 0x2591: case 0x2592:
+								glyph = '.'; ascii_fallback = 1; break;
+							case 0x2594:
+								glyph = '\''; ascii_fallback = 1; break;
+							/* Dingbats/arrows used by Claude Code and other modern TUIs */
+							case 0x2190:
+								glyph = '<'; ascii_fallback = 1; break;
+							case 0x2192:
+							case 0x276F:
+								glyph = '>'; ascii_fallback = 1; break;
+							case 0x2191:
+								glyph = '^'; ascii_fallback = 1; break;
+							case 0x2193:
+								glyph = 'v'; ascii_fallback = 1; break;
+							case 0x25CF:
+							case 0x25CB:
+							case 0x2B24:
+								glyph = '*'; ascii_fallback = 1; break;
+							case 0x2713:
+								glyph = 'v'; ascii_fallback = 1; break;
+							case 0x2717:
+							case 0x2715:
+								glyph = 'x'; ascii_fallback = 1; break;
 						}
-						else if (glyph <= 0xFFFF)
-							glyph = UNICODE_BMP_NORMALIZER[glyph];
-						else
-							glyph = MAC_ROMAN_LOZENGE;
+
+						if (!ascii_fallback)
+						{
+							sym_code = symbol_font_lookup(orig_cp);
+							if (sym_code >= 0)
+							{
+								glyph = sym_code;
+								row_is_symbol[pos.col] = 1;
+							}
+							else if (glyph <= 0xFFFF)
+								glyph = UNICODE_BMP_NORMALIZER[glyph];
+							else
+								glyph = MAC_ROMAN_LOZENGE;
+						}
 					}
 
 					row_text[pos.col] = glyph;
