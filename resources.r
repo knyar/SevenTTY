@@ -37,7 +37,7 @@ resource 'DITL' (DITL_ABOUT, purgeable) {
 };
 
 resource 'DLOG' (DLOG_CONNECT) {
-	{ 50, 100, 195, 420 },
+	{ 50, 100, 285, 420 },
 	dBoxProc,
 	visible,
 	noGoAway,
@@ -49,10 +49,10 @@ resource 'DLOG' (DLOG_CONNECT) {
 
 resource 'DITL' (DITL_CONNECT) {
 	{
-		{ 115, 320-10-80, 135, 320-10 },
+		{ 205, 320-10-80, 225, 320-10 },
 		Button { enabled, "Connect" };
 
-		{ 190-10-20-5, 320-10-80-5, 190-10+5, 320-10+5 },
+		{ 205-5, 320-10-80-5, 225+5, 320-10+5 },
 		UserItem { enabled };
 
 		{ 10, 10, 30, 270 },
@@ -70,7 +70,7 @@ resource 'DITL' (DITL_CONNECT) {
 		{ 85, 15, 101, 150 },
 		EditText { enabled, "" };
 
-		{ 115, 10, 135, 90 },
+		{ 205, 10, 225, 90 },
 		Button { enabled, "Cancel" };
 
 		{ 85, 160, 101, 245 },
@@ -78,6 +78,18 @@ resource 'DITL' (DITL_CONNECT) {
 
 		{ 85, 250, 101, 310 },
 		RadioButton { enabled, "Key" };
+
+		{ 120, 10, 136, 150 },
+		CheckBox { enabled, "Use SOCKS proxy" };
+
+		{ 145, 10, 165, 270 },
+		StaticText { enabled, "SOCKS proxy host and port" };
+
+		{ 170, 15, 186, 260 },
+		EditText { enabled, "" };
+
+		{ 170, 270, 186, 305 },
+		EditText { enabled, "1080" };
 	}
 };
 

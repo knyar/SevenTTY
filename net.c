@@ -12,10 +12,200 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <Script.h>
 #include <Threads.h>
 
 #include <mbedtls/base64.h>
+
+static void pstring_to_c_string(char* dest, size_t dest_size, const char* src)
+{
+	if (dest_size == 0) return;
+
+	size_t length = (unsigned char)src[0];
+	if (length >= dest_size) length = dest_size - 1;
+	memcpy(dest, src + 1, length);
+	dest[length] = '\0';
+}
+
+static int pstring_to_port(const char* src, unsigned short* port)
+{
+	char port_string[16];
+	int value = 0;
+
+	pstring_to_c_string(port_string, sizeof(port_string), src);
+	value = atoi(port_string);
+
+	if (value <= 0 || value > 65535) return 0;
+
+	*port = (unsigned short)value;
+	return 1;
+}
+
+static int build_host_port(char* dest, size_t dest_size, const char* host, const char* port)
+{
+	char host_string[256];
+	char port_string[16];
+
+	pstring_to_c_string(host_string, sizeof(host_string), host);
+	pstring_to_c_string(port_string, sizeof(port_string), port);
+
+	if (host_string[0] == '\0' || port_string[0] == '\0') return 0;
+	int written = snprintf(dest, dest_size, "%s:%s", host_string, port_string);
+	if (written < 0 || (size_t)written >= dest_size) return 0;
+
+	return 1;
+}
+
+static int endpoint_send_all(struct session* s, const unsigned char* buffer, size_t length)
+{
+	size_t sent = 0;
+
+	while (sent < length && s->thread_command != EXIT)
+	{
+		OTResult ret = OTSnd(s->endpoint, (void*)(buffer + sent), length - sent, 0);
+
+		if (ret > 0)
+		{
+			sent += ret;
+		}
+		else if (ret == kOTNoDataErr)
+		{
+			YieldToAnyThread();
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
+	return sent == length;
+}
+
+static int endpoint_recv_exact(struct session* s, unsigned char* buffer, size_t length)
+{
+	size_t received = 0;
+
+	while (received < length && s->thread_command != EXIT)
+	{
+		OTFlags ot_flags = 0;
+		OTResult ret = OTRcv(s->endpoint, buffer + received, length - received, &ot_flags);
+
+		if (ret > 0)
+		{
+			received += ret;
+		}
+		else if (ret == kOTNoDataErr)
+		{
+			YieldToAnyThread();
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
+	return received == length;
+}
+
+static const char* socks5_error_string(unsigned char code)
+{
+	switch (code)
+	{
+		case 0x00: return "success";
+		case 0x01: return "general SOCKS server failure";
+		case 0x02: return "connection not allowed by ruleset";
+		case 0x03: return "network unreachable";
+		case 0x04: return "host unreachable";
+		case 0x05: return "connection refused";
+		case 0x06: return "TTL expired";
+		case 0x07: return "command not supported";
+		case 0x08: return "address type not supported";
+		default:   return "unknown SOCKS error";
+	}
+}
+
+static int socks5_connect(int session_idx, const char* destination_host, unsigned short destination_port)
+{
+	struct session* s = &sessions[session_idx];
+	size_t host_length = strlen(destination_host);
+	unsigned char greeting[3] = { 0x05, 0x01, 0x00 };
+	unsigned char response[4] = { 0 };
+	unsigned char port_bytes[2] = {
+		(unsigned char)((destination_port >> 8) & 0xff),
+		(unsigned char)(destination_port & 0xff)
+	};
+
+	if (host_length == 0 || host_length > 255)
+	{
+		printf_s(session_idx, "SOCKS destination host length unsupported.\r\n");
+		return 0;
+	}
+
+	printf_s(session_idx, "Negotiating SOCKS5 proxy... "); YieldToAnyThread();
+
+	if (!endpoint_send_all(s, greeting, sizeof(greeting))) return 0;
+	if (!endpoint_recv_exact(s, response, 2)) return 0;
+
+	if (response[0] != 0x05 || response[1] != 0x00)
+	{
+		printf_s(session_idx, "failed: SOCKS proxy requires unsupported authentication.\r\n");
+		return 0;
+	}
+
+	unsigned char request_header[5] = { 0x05, 0x01, 0x00, 0x03, (unsigned char)host_length };
+	if (!endpoint_send_all(s, request_header, sizeof(request_header))) return 0;
+	if (!endpoint_send_all(s, (const unsigned char*)destination_host, host_length)) return 0;
+	if (!endpoint_send_all(s, port_bytes, sizeof(port_bytes))) return 0;
+
+	if (!endpoint_recv_exact(s, response, sizeof(response))) return 0;
+
+	if (response[0] != 0x05)
+	{
+		printf_s(session_idx, "failed: invalid SOCKS version in response.\r\n");
+		return 0;
+	}
+
+	if (response[1] != 0x00)
+	{
+		printf_s(session_idx, "failed: %s.\r\n", socks5_error_string(response[1]));
+		return 0;
+	}
+
+	/* consume the bind address from the SOCKS response */
+	switch (response[3])
+	{
+		case 0x01: /* IPv4 */
+			if (!endpoint_recv_exact(s, response, 4)) return 0;
+			break;
+
+		case 0x03: /* domain name */
+			if (!endpoint_recv_exact(s, response, 1)) return 0;
+			if (s->recv_buffer)
+			{
+				if (!endpoint_recv_exact(s, (unsigned char*)s->recv_buffer, response[0])) return 0;
+			}
+			break;
+
+		case 0x04: /* IPv6 */
+			if (s->recv_buffer)
+			{
+				if (!endpoint_recv_exact(s, (unsigned char*)s->recv_buffer, 16)) return 0;
+			}
+			break;
+
+		default:
+			printf_s(session_idx, "failed: unsupported SOCKS bind address type.\r\n");
+			return 0;
+	}
+
+	/* consume bind port */
+	if (!endpoint_recv_exact(s, response, 2)) return 0;
+
+	printf_s(session_idx, "done.\r\n"); YieldToAnyThread();
+	return 1;
+}
 
 void ssh_write_s(int session_idx, char* buf, size_t len)
 {
@@ -238,50 +428,69 @@ void end_connection(int session_idx)
 		libssh2_session_disconnect(s->ssh_session, "Normal Shutdown, Thank you for playing");
 		libssh2_session_free(s->ssh_session);
 		s->ssh_session = NULL;
+		libssh2_exit();
 	}
-
-	libssh2_exit();
 
 	if (s->endpoint != kOTInvalidEndpointRef)
 	{
-		// request to close the TCP connection
-		OTSndOrderlyDisconnect(s->endpoint);
+		OTResult result = OTLook(s->endpoint);
 
-		// discard remaining data so we can finish closing the connection
-		// limit iterations to prevent infinite loop if endpoint is stuck
+		if (result == T_DISCONNECT)
 		{
-			int rc = 1;
-			int drain_count = 0;
-			OTFlags ot_flags;
-			while (rc != kOTLookErr && drain_count < 1000)
+			/* abrupt disconnect already pending, just consume it */
+			OTRcvDisconnect(s->endpoint, nil);
+		}
+		else if (result == T_ORDREL)
+		{
+			/* remote sent orderly disconnect, acknowledge and respond */
+			OTRcvOrderlyDisconnect(s->endpoint);
+			OTSndOrderlyDisconnect(s->endpoint);
+		}
+		else if (result == T_RESET)
+		{
+			/* connection was reset, nothing to consume */
+		}
+		else
+		{
+			/* no pending disconnect event, initiate orderly disconnect */
+			OTSndOrderlyDisconnect(s->endpoint);
+
+			/* drain remaining data so we can finish closing the connection */
+			if (s->recv_buffer != NULL)
 			{
-				rc = OTRcv(s->endpoint, s->recv_buffer, 1, &ot_flags);
-				drain_count++;
+				OTFlags ot_flags;
+				OTResult rc;
+				int yields = 0;
+				for (;;)
+				{
+					rc = OTRcv(s->endpoint, s->recv_buffer,
+						SSH_BUFFER_SIZE, &ot_flags);
+					if (rc == kOTLookErr) break;
+					if (rc == kOTNoDataErr)
+					{
+						if (++yields > 300) break;
+						YieldToAnyThread();
+						continue;
+					}
+					if (rc <= 0) break;
+					yields = 0;
+				}
+			}
+
+			/* finish closing the TCP connection */
+			result = OTLook(s->endpoint);
+
+			if (result == T_DISCONNECT)
+			{
+				OTRcvDisconnect(s->endpoint, nil);
+			}
+			else if (result == T_ORDREL)
+			{
+				OTRcvOrderlyDisconnect(s->endpoint);
 			}
 		}
 
-		// finish closing the TCP connection
-		OSStatus result = OTLook(s->endpoint);
-
-		switch (result)
-		{
-			case T_DISCONNECT:
-				OTRcvDisconnect(s->endpoint, nil);
-				break;
-
-			case T_ORDREL:
-				err = OTRcvOrderlyDisconnect(s->endpoint);
-				if (err == noErr)
-				{
-					err = OTSndOrderlyDisconnect(s->endpoint);
-				}
-				break;
-
-			default:
-				break;
-		}
-
-		// release endpoint
+		/* release endpoint */
 		OTUnbind(s->endpoint);
 		OTCloseProvider(s->endpoint);
 		s->endpoint = kOTInvalidEndpointRef;
@@ -295,7 +504,6 @@ int check_network_events(int session_idx)
 {
 	struct session* s = &sessions[session_idx];
 	int ok = 1;
-	OSStatus err = noErr;
 
 	// check if we have any new network events
 	OTResult look_result = OTLook(s->endpoint);
@@ -309,26 +517,24 @@ int check_network_events(int session_idx)
 			break;
 
 		case T_RESET:
-			// connection reset? close it/give up
-			end_connection(session_idx);
+			// connection reset, let end_connection() handle cleanup
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
 
 		case T_DISCONNECT:
-			// got disconnected
+			// got disconnected, consume the event and let end_connection()
+			// handle the rest of cleanup
 			OTRcvDisconnect(s->endpoint, nil);
-			end_connection(session_idx);
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
 
 		case T_ORDREL:
-			// nice tcp disconnect requested by remote
-			err = OTRcvOrderlyDisconnect(s->endpoint);
-			if (err == noErr)
-			{
-				err = OTSndOrderlyDisconnect(s->endpoint);
-			}
-			end_connection(session_idx);
+			// remote sent orderly disconnect, consume the event and let
+			// end_connection() send our half and finish cleanup
+			OTRcvOrderlyDisconnect(s->endpoint);
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
 
@@ -687,12 +893,35 @@ int init_connection(int session_idx, char* hostname)
 {
 	struct session* s = &sessions[session_idx];
 	int rc;
+	char target_host[256];
+	char connect_address[512];
+	unsigned short target_port = 0;
 
 	// OT vars
 	OSStatus err = noErr;
 	TCall sndCall;
 	DNSAddress hostDNSAddress;
 
+	pstring_to_c_string(target_host, sizeof(target_host), prefs.hostname);
+	if (!pstring_to_port(prefs.port, &target_port))
+	{
+		printf_s(session_idx, "Invalid SSH port.\r\n");
+		return 0;
+	}
+
+	if (prefs.socks_proxy_enabled)
+	{
+		if (!build_host_port(connect_address, sizeof(connect_address), prefs.socks_proxy_host, prefs.socks_proxy_port))
+		{
+			printf_s(session_idx, "Invalid SOCKS proxy host or port.\r\n");
+			return 0;
+		}
+	}
+	else
+	{
+		strncpy(connect_address, hostname, sizeof(connect_address) - 1);
+		connect_address[sizeof(connect_address) - 1] = '\0';
+	}
 
 	// open TCP endpoint
 	s->endpoint = OTOpenEndpoint(OTCreateConfiguration(kTCPName), 0, nil, &err);
@@ -715,9 +944,13 @@ int init_connection(int session_idx, char* hostname)
 	OTMemzero(&sndCall, sizeof(TCall));
 
 	sndCall.addr.buf = (UInt8 *) &hostDNSAddress;
-	sndCall.addr.len = OTInitDNSAddress(&hostDNSAddress, (char *) hostname);
+	sndCall.addr.len = OTInitDNSAddress(&hostDNSAddress, (char *) connect_address);
 
-	printf_s(session_idx, "Connecting to endpoint \"%s\"... ", hostname); YieldToAnyThread();
+	if (prefs.socks_proxy_enabled)
+		printf_s(session_idx, "Connecting to SOCKS proxy \"%s\"... ", connect_address);
+	else
+		printf_s(session_idx, "Connecting to endpoint \"%s\"... ", connect_address);
+	YieldToAnyThread();
 	err = OTConnect(s->endpoint, &sndCall, nil);
 	if (err != noErr)
 	{
@@ -725,6 +958,11 @@ int init_connection(int session_idx, char* hostname)
 		return 0;
 	}
 	printf_s(session_idx, "done.\r\n"); YieldToAnyThread();
+
+	if (prefs.socks_proxy_enabled && !socks5_connect(session_idx, target_host, target_port))
+	{
+		return 0;
+	}
 
 	// init libssh2
 	SSH_CHECK(libssh2_init(0));

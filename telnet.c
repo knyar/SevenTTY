@@ -220,37 +220,52 @@ static void tcp_end_connection(int session_idx)
 
 	if (s->endpoint != kOTInvalidEndpointRef)
 	{
-		OTSndOrderlyDisconnect(s->endpoint);
+		OTResult result = OTLook(s->endpoint);
 
-		/* drain remaining data */
+		if (result == T_DISCONNECT)
 		{
-			int rc = 1;
-			int drain_count = 0;
-			OTFlags ot_flags;
-			while (rc != kOTLookErr && drain_count < 1000)
-			{
-				rc = OTRcv(s->endpoint, s->recv_buffer, 1, &ot_flags);
-				drain_count++;
-			}
+			OTRcvDisconnect(s->endpoint, nil);
 		}
-
-		/* finish closing */
+		else if (result == T_ORDREL)
 		{
-			OSStatus result = OTLook(s->endpoint);
-			OSStatus err;
-			switch (result)
+			OTRcvOrderlyDisconnect(s->endpoint);
+			OTSndOrderlyDisconnect(s->endpoint);
+		}
+		else if (result == T_RESET)
+		{
+			/* connection was reset, nothing to consume */
+		}
+		else
+		{
+			OTSndOrderlyDisconnect(s->endpoint);
+
+			if (s->recv_buffer != NULL)
 			{
-				case T_DISCONNECT:
-					OTRcvDisconnect(s->endpoint, nil);
-					break;
-				case T_ORDREL:
-					err = OTRcvOrderlyDisconnect(s->endpoint);
-					if (err == noErr)
-						OTSndOrderlyDisconnect(s->endpoint);
-					break;
-				default:
-					break;
+				OTFlags ot_flags;
+				OTResult rc;
+				int yields = 0;
+				for (;;)
+				{
+					rc = OTRcv(s->endpoint, s->recv_buffer,
+						SSH_BUFFER_SIZE, &ot_flags);
+					if (rc == kOTLookErr) break;
+					if (rc == kOTNoDataErr)
+					{
+						if (++yields > 300) break;
+						YieldToAnyThread();
+						continue;
+					}
+					if (rc <= 0) break;
+					yields = 0;
+				}
 			}
+
+			result = OTLook(s->endpoint);
+
+			if (result == T_DISCONNECT)
+				OTRcvDisconnect(s->endpoint, nil);
+			else if (result == T_ORDREL)
+				OTRcvOrderlyDisconnect(s->endpoint);
 		}
 
 		OTUnbind(s->endpoint);
@@ -275,27 +290,23 @@ static int tcp_check_events(int session_idx)
 
 		case T_RESET:
 			printf_s(session_idx, "\r\nConnection reset.\r\n");
-			tcp_end_connection(session_idx);
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
 
 		case T_DISCONNECT:
 			OTRcvDisconnect(s->endpoint, nil);
 			printf_s(session_idx, "\r\nConnection reset by peer.\r\n");
-			tcp_end_connection(session_idx);
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
 
 		case T_ORDREL:
-		{
-			OSStatus err = OTRcvOrderlyDisconnect(s->endpoint);
-			if (err == noErr)
-				OTSndOrderlyDisconnect(s->endpoint);
+			OTRcvOrderlyDisconnect(s->endpoint);
 			printf_s(session_idx, "\r\nConnection closed by peer.\r\n");
-			tcp_end_connection(session_idx);
+			s->thread_state = CLEANUP;
 			ok = 0;
 			break;
-		}
 
 		default:
 			break;

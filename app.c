@@ -165,7 +165,7 @@ void set_terminal_string(void)
 /* ---- Resource-based preferences ---- */
 
 /* disk layout for 'PREF' resource — bump DISK_PREFS_VERSION if you change this struct */
-#define DISK_PREFS_VERSION 2
+#define DISK_PREFS_VERSION 3
 
 struct disk_prefs
 {
@@ -191,6 +191,10 @@ struct disk_prefs
 	char pubkey_path[1024];
 	/* v2 fields — append only, never insert above */
 	short bold_is_bright;
+	/* v3 fields */
+	short socks_proxy_enabled;
+	char socks_proxy_host[256];
+	char socks_proxy_port[256];
 };
 
 static OSErr get_prefs_spec(FSSpec* spec)
@@ -292,6 +296,11 @@ have_file:
 	/* v2 fields */
 	dp->bold_is_bright = (short)prefs.bold_is_bright;
 
+	/* v3 fields */
+	dp->socks_proxy_enabled = (short)prefs.socks_proxy_enabled;
+	memcpy(dp->socks_proxy_host, prefs.socks_proxy_host, 256);
+	memcpy(dp->socks_proxy_port, prefs.socks_proxy_port, 256);
+
 	HUnlock(h);
 
 	AddResource(h, 'PREF', 128, "\pPreferences");
@@ -380,11 +389,21 @@ void init_prefs(void)
 	memset(&(prefs.username), 0, 256);
 	memset(&(prefs.password), 0, 256);
 	memset(&(prefs.port), 0, 256);
+	memset(&(prefs.socks_proxy_host), 0, 256);
+	memset(&(prefs.socks_proxy_port), 0, 256);
 
 	/* default port: 22 */
 	prefs.port[0] = 2;
 	prefs.port[1] = '2';
 	prefs.port[2] = '2';
+
+	/* default SOCKS proxy port: 1080 */
+	prefs.socks_proxy_port[0] = 4;
+	prefs.socks_proxy_port[1] = '1';
+	prefs.socks_proxy_port[2] = '0';
+	prefs.socks_proxy_port[3] = '8';
+	prefs.socks_proxy_port[4] = '0';
+	prefs.socks_proxy_enabled = 0;
 
 	prefs.pubkey_path = "";
 	prefs.privkey_path = "";
@@ -599,6 +618,23 @@ void load_prefs(void)
 	/* v2 fields */
 	if (dp->version >= 2)
 		prefs.bold_is_bright = dp->bold_is_bright;
+
+	/* v3 fields */
+	if (dp->version >= 3)
+	{
+		prefs.socks_proxy_enabled = dp->socks_proxy_enabled;
+		memcpy(prefs.socks_proxy_host, dp->socks_proxy_host, 256);
+		memcpy(prefs.socks_proxy_port, dp->socks_proxy_port, 256);
+
+		if (prefs.socks_proxy_port[0] == 0)
+		{
+			prefs.socks_proxy_port[0] = 4;
+			prefs.socks_proxy_port[1] = '1';
+			prefs.socks_proxy_port[2] = '0';
+			prefs.socks_proxy_port[3] = '8';
+			prefs.socks_proxy_port[4] = '0';
+		}
+	}
 
 	HUnlock(h);
 	ReleaseResource(h);
@@ -2610,6 +2646,21 @@ int intro_dialog(void)
 	key_radio = (ControlHandle)itemH;
 	SetControlValue(key_radio, 0);
 
+	ControlHandle socks_proxy_checkbox;
+	GetDialogItem(dlg, 11, &type, &itemH, &box);
+	socks_proxy_checkbox = (ControlHandle)itemH;
+	SetControlValue(socks_proxy_checkbox, prefs.socks_proxy_enabled ? 1 : 0);
+
+	ControlHandle socks_proxy_host_text_box;
+	GetDialogItem(dlg, 13, &type, &itemH, &box);
+	socks_proxy_host_text_box = (ControlHandle)itemH;
+	SetDialogItemText((Handle)socks_proxy_host_text_box, (ConstStr255Param)prefs.socks_proxy_host);
+
+	ControlHandle socks_proxy_port_text_box;
+	GetDialogItem(dlg, 14, &type, &itemH, &box);
+	socks_proxy_port_text_box = (ControlHandle)itemH;
+	SetDialogItemText((Handle)socks_proxy_port_text_box, (ConstStr255Param)prefs.socks_proxy_port);
+
 	// recall last-used connection type
 	if (prefs.auth_type == USE_PASSWORD)
 	{
@@ -2635,11 +2686,18 @@ int intro_dialog(void)
 			SetControlValue(key_radio, 1);
 			SetControlValue(password_radio, 0);
 		}
+		else if (item == 11)
+		{
+			SetControlValue(socks_proxy_checkbox, !GetControlValue(socks_proxy_checkbox));
+		}
 	} while(item != 1 && item != 8);
 
 	// copy the text out of the boxes
 	GetDialogItemText((Handle)address_text_box, (unsigned char *)prefs.hostname);
 	GetDialogItemText((Handle)username_text_box, (unsigned char *)prefs.username);
+	GetDialogItemText((Handle)socks_proxy_host_text_box, (unsigned char *)prefs.socks_proxy_host);
+	GetDialogItemText((Handle)socks_proxy_port_text_box, (unsigned char *)prefs.socks_proxy_port);
+	prefs.socks_proxy_enabled = GetControlValue(socks_proxy_checkbox);
 
 	// sanitize hostname: only allow valid DNS chars (a-z, 0-9, '.', '-')
 	{

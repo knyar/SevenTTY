@@ -220,6 +220,9 @@ struct preferences
 	char username[256];
 	char password[256];
 	char port[256];
+	char socks_proxy_host[256];
+	char socks_proxy_port[256];
+	int socks_proxy_enabled;
 
 	// malloc'd c strings
 	char* pubkey_path;
