@@ -43,6 +43,6 @@ $RETRO68_PATH/toolchain/m68k-apple-macos/RIncludes/RetroPPCAPPL.r \
 -o build-fat/SevenTTY-fat.bin \
 --cc build-fat/SevenTTY-fat.dsk --cc build-fat/SevenTTY-fat.APPL --cc build-fat/%SevenTTY-fat.ad \
 -t APPL -c SSH7 \
---data build-ppc/SevenTTY.pef build-ppc/SevenTTY.r.rsrc.bin
+--data build-ppc/SevenTTY.pef build-ppc/resources.r.rsrc.bin build-ppc/symbolfont.r.rsrc.bin
 
 echo "done."

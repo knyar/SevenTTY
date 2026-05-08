@@ -3,3 +3,4 @@ build-m68k/
 build-ppc/
 build/
 .vscode/
+MPW-GM.img.bin
